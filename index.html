@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Night City: Ghost Protocol</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;900&family=Share+Tech+Mono&display=swap');
+:root { --c1: #00ffcc; --c2: #ff006e; --bg: #00000a; }
+
+* { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; outline: none; }
+body, html { width: 100%; height: 100%; background: var(--bg); overflow: hidden; font-family: 'Share Tech Mono', monospace; color: #fff; user-select: none; }
+
+#cv { position: fixed; inset: 0; z-index: 1; transition: filter 0.5s; }
+#rainCv { position: fixed; inset: 0; z-index: 2; pointer-events: none; opacity: 0.3; }
+
+#hud { position: fixed; inset: 0; z-index: 100; pointer-events: none; }
+#hud * { pointer-events: all; }
+
+#hudTL { position: absolute; top: 25px; left: 25px; }
+#hudTitle { font-family: 'Orbitron', sans-serif; font-weight: 900; font-size: 16px; color: var(--c1); text-shadow: 0 0 10px var(--c1); }
+
+#mapContainer {
+    position: absolute; top: 25px; right: 25px;
+    width: 100px; height: 100px;
+    border: 2px solid var(--c1); border-radius: 50%;
+    background: radial-gradient(circle, rgba(0,255,204,0.1) 0%, rgba(0,0,10,0.85) 80%);
+    overflow: hidden; box-shadow: 0 0 15px rgba(0,255,204,0.3);
+}
+#mapContainer::after {
+    content: ""; position: absolute; inset: 0;
+    background: conic-gradient(from 0deg, transparent 0%, rgba(0,255,204,0.2) 50%, transparent 100%);
+    animation: radar-spin 4s linear infinite;
+}
+@keyframes radar-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+#mmCv { width: 100%; height: 100%; position: relative; z-index: 2; }
+
+#speedControl { position: absolute; bottom: 130px; left: 25px; width: 150px; }
+input[type=range] { -webkit-appearance: none; width: 100%; height: 4px; background: rgba(0,255,204,0.15); border-radius: 2px; }
+input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 24px; height: 12px; background: var(--c1); border-radius: 2px; box-shadow: 0 0 10px var(--c1); }
+
+#modes { 
+    position: absolute; bottom: 25px; left: 50%; transform: translateX(-50%); 
+    display: flex; gap: 8px; overflow-x: auto; width: 95vw; padding: 10px 20px; scrollbar-width: none;
+}
+.mbtn { 
+    font-family: 'Orbitron', sans-serif; font-size: 8px; padding: 12px 18px; 
+    border: 1px solid rgba(0,255,204,0.2); background: rgba(0,10,15,0.9); color: rgba(0,255,204,0.6); 
+    clip-path: polygon(10% 0%, 90% 0%, 100% 50%, 90% 100%, 10% 100%, 0% 50%); transition: 0.3s;
+}
+.mbtn.on { color: var(--c1); border-color: var(--c1); box-shadow: 0 0 15px var(--c1); background: rgba(0,255,204,0.1); }
+
+#fxBtns { position: absolute; bottom: 130px; right: 25px; display: flex; flex-direction: column; gap: 15px; }
+.ibtn { width: 55px; height: 55px; border: 1px solid rgba(0,255,204,0.3); background: rgba(0,10,15,0.9); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 24px; }
+.ibtn.on { border-color: var(--c2); color: var(--c2); box-shadow: 0 0 15px var(--c2); }
+
+#ghostMsg { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); font-family: 'Orbitron'; font-weight: 900; font-size: 22px; color: #fff; text-shadow: 0 0 20px var(--c1); opacity: 0; pointer-events: none; transition: 0.5s; z-index: 200; }
+</style>
+</head>
+<body>
+
+<div id="ghostMsg">GHOST_PROTOCOL_INIT</div>
+<canvas id="rainCv"></canvas>
+<canvas id="cv"></canvas>
+
+<div id="hud">
+    <div id="hudTL">
+        <div id="hudTitle">OMNI // GHOST_EDITION</div>
+        <div id="sysStat" style="font-size:8px; color:var(--c1); margin-top:5px; opacity:0.6;">SYSTEMS_READY</div>
+    </div>
+    <div id="mapContainer"><canvas id="mmCv"></canvas></div>
+    <div id="speedControl">
+        <div style="font-size:8px; margin-bottom:10px; color:var(--c1)">THRUST_POWER</div>
+        <input type="range" id="inpSpeed" min="0" max="300" value="80">
+    </div>
+    <div id="fxBtns">
+        <div class="ibtn on" id="btnRain">🌧</div>
+        <div class="ibtn" id="btnSecret">⚡</div>
+    </div>
+    <div id="modes">
+        <button class="mbtn on" data-m="drive">DRIVE</button>
+        <button class="mbtn" data-m="fly">FLY</button>
+        <button class="mbtn" data-m="orbit">ORBIT</button>
+        <button class="mbtn" data-m="cine">CINEMA</button>
+        <button class="mbtn" data-m="worm">WORM</button>
+        <button class="mbtn" data-m="top">SAT</button>
+    </div>
+</div>
+
+<script type="importmap">{ "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+let speed = 80, mode = 'drive', isRain = true, isGhost = false, time = 0, totalZ = 0, mouseX = 0, mouseY = 0;
+const buildings = [];
+
+const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('cv'), antialias: false });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+renderer.setSize(window.innerWidth, window.innerHeight);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x00000a, 0.012);
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+
+const grid = new THREE.GridHelper(1500, 70, 0x00ffcc, 0x001515);
+grid.material.opacity = 0.2; grid.material.transparent = true;
+scene.add(grid);
+
+const light = new THREE.PointLight(0x00ffcc, 30, 150);
+scene.add(light);
+scene.add(new THREE.AmbientLight(0xffffff, 0.2));
+
+function addB(x, z) {
+    const h = 25 + Math.random() * 80;
+    const g = new THREE.Group();
+    const mat = new THREE.MeshPhongMaterial({ color: 0x020205, emissive: 0x000505 });
+    const b = new THREE.Mesh(new THREE.BoxGeometry(10, h, 10), mat);
+    g.add(b);
+    
+    const winMat = new THREE.MeshBasicMaterial({color: [0x00ffcc, 0xff006e][Math.floor(Math.random()*2)]});
+    for(let i=0; i<3; i++) {
+        const s = new THREE.Mesh(new THREE.BoxGeometry(10.2, 0.6, 10.2), winMat);
+        s.position.y = (Math.random()-0.5) * h;
+        g.add(s);
+    }
+    g.position.set(x, h/2, z);
+    scene.add(g);
+    buildings.push({mesh: g, x, z, h, mat, winMat});
+}
+for(let i=0; i<80; i++) addB(Math.random() > 0.5 ? 35+Math.random()*60 : -35-Math.random()*60, -i*20);
+
+const rainCv = document.getElementById('rainCv');
+const rCtx = rainCv.getContext('2d');
+let drops = [];
+function initRain() {
+    rainCv.width = window.innerWidth; rainCv.height = window.innerHeight;
+    drops = Array.from({length: 100}, () => ({x: Math.random()*rainCv.width, y: Math.random()*rainCv.height, s: 15}));
+}
+initRain();
+
+window.addEventListener('mousemove', e => { mouseX = (e.clientX/window.innerWidth-0.5)*2; mouseY = (e.clientY/window.innerHeight-0.5)*2; });
+document.getElementById('inpSpeed').oninput = e => speed = e.target.value;
+document.querySelectorAll('.mbtn').forEach(b => b.onclick = () => { mode = b.dataset.m; document.querySelectorAll('.mbtn').forEach(x => x.classList.toggle('on', x===b)); });
+document.getElementById('btnRain').onclick = function() { isRain = !isRain; this.classList.toggle('on', isRain); };
+
+// СЕКРЕТНАЯ ФИШКА: GHOST PROTOCOL (Трипл-тап)
+let clicks = 0, clickTimer;
+document.getElementById('btnSecret').onclick = () => {
+    clicks++;
+    clearTimeout(clickTimer);
+    if(clicks === 3) {
+        isGhost = !isGhost;
+        const msg = document.getElementById('ghostMsg');
+        msg.style.opacity = 1; setTimeout(() => msg.style.opacity = 0, 1500);
+        
+        buildings.forEach(b => {
+            b.mat.wireframe = isGhost;
+            b.winMat.color.set(isGhost ? 0xffffff : (b.x > 0 ? 0x00ffcc : 0xff006e));
+        });
+        
+        speed = isGhost ? 10 : 80;
+        document.getElementById('inpSpeed').value = speed;
+        document.getElementById('btnSecret').classList.toggle('on', isGhost);
+        clicks = 0;
+    } else {
+        clickTimer = setTimeout(() => clicks = 0, 400);
+    }
+};
+
+const mmCv = document.getElementById('mmCv');
+const mmCtx = mmCv.getContext('2d');
+
+function animate() {
+    requestAnimationFrame(animate);
+    const dt = 0.016; time += dt;
+    totalZ -= speed * dt;
+
+    if(mode === 'drive') {
+        camera.position.set(mouseX*15, 8, totalZ + 20); camera.lookAt(0, 5, totalZ - 40);
+    } else if(mode === 'fly') {
+        camera.position.set(mouseX*40, 45 - mouseY*30, totalZ + 25); camera.lookAt(0, 0, totalZ - 60);
+    } else if(mode === 'orbit') {
+        camera.position.set(Math.cos(time*0.5)*90, 40, totalZ + Math.sin(time*0.5)*90); camera.lookAt(0, 10, totalZ);
+    } else if(mode === 'cine') {
+        camera.position.set(Math.sin(time*0.3)*60, 20, totalZ + 70); camera.lookAt(0, 5, totalZ - 30);
+    } else if(mode === 'worm') {
+        camera.position.set(0, 1.5, totalZ + 10); camera.lookAt(0, 8, totalZ - 30);
+    } else if(mode === 'top') {
+        camera.position.set(0, 200, totalZ); camera.lookAt(0,0,totalZ-1);
+    }
+
+    grid.position.z = totalZ;
+    light.position.set(camera.position.x, 20, totalZ - 10);
+    
+    buildings.forEach(b => {
+        if(b.mesh.position.z > totalZ + 200) b.mesh.position.z -= 1600;
+        // Фишка: здания плавно взлетают в режиме призрака
+        const targetY = isGhost ? 50 + Math.sin(time + b.x)*20 : b.h/2;
+        b.mesh.position.y += (targetY - b.mesh.position.y) * 0.05;
+    });
+
+    if(isRain) {
+        rCtx.clearRect(0,0,rainCv.width,rainCv.height);
+        rCtx.strokeStyle = isGhost ? '#fff' : 'rgba(0,255,204,0.3)';
+        drops.forEach(d => { d.y += d.s; if(d.y > rainCv.height) d.y = -20; rCtx.beginPath(); rCtx.moveTo(d.x, d.y); rCtx.lineTo(d.x, d.y+15); rCtx.stroke(); });
+    } else rCtx.clearRect(0,0,rainCv.width,rainCv.height);
+
+    mmCtx.clearRect(0,0,100,100);
+    mmCtx.strokeStyle = 'rgba(0,255,204,0.15)';
+    mmCtx.beginPath(); mmCtx.moveTo(50,0); mmCtx.lineTo(50,100); mmCtx.moveTo(0,50); mmCtx.lineTo(100,50); mmCtx.stroke();
+    buildings.forEach(b => {
+        const rx = 50 + (b.mesh.position.x - camera.position.x)/12;
+        const rz = 50 + (b.mesh.position.z - totalZ)/12;
+        if(Math.sqrt(Math.pow(rx-50,2)+Math.pow(rz-50,2)) < 48) {
+            mmCtx.fillStyle = isGhost ? '#fff' : (b.x > 0 ? '#00ffcc' : '#ff006e');
+            mmCtx.fillRect(rx, rz, 2.5, 2.5);
+        }
+    });
+    mmCtx.fillStyle = '#fff'; mmCtx.fillRect(49,49,3,3);
+
+    renderer.render(scene, camera);
+}
+window.addEventListener('resize', () => { camera.aspect = window.innerWidth/window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); initRain(); });
+animate();
+</script>
+</body>
+</html>
